@@ -4,8 +4,8 @@
     { "src": "api/index.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/api/v1/video/extract-frames", "dest": "api/index.js" },
-    { "src": "/api/(.*)", "dest": "api/index.js" },
+    { "handle": "filesystem" },
+    { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "src": "/(.*)", "dest": "/public/$1" }
   ]
 }
