@@ -17,6 +17,14 @@ const port = 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Disable body parsing for the specific upload route to enable streaming
+app.use((req, res, next) => {
+  if (req.path.includes('/extract-frames')) {
+    return next();
+  }
+  return express.json()(req, res, next);
+});
+
 // Serve frontend files from the root 'public' directory
 app.use(express.static(path.join(__dirname, '../public')));
 
