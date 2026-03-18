@@ -5,8 +5,9 @@ const videoController = require('../controllers/video.controller');
 
 // Use Memory Storage instead of Disk Storage
 const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const upload = multer({ storage: multer.memoryStorage() });
 
+router.post('/get-upload-url', videoController.getUploadUrl);
 router.post('/extract-frames', upload.single('video'), videoController.extractFrames);
 router.get('/jobs', videoController.getAllJobs);
 router.get('/jobs/:jobId', videoController.getJobStatus);

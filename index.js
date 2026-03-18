@@ -14,16 +14,15 @@ require('./src/workers/video.worker');
 const app = express();
 const port = 3000;
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Disable body parsing for the specific upload route to enable streaming
+// Disable body parsing for large multipart uploads to enable streaming
 app.use((req, res, next) => {
-  if (req.path.includes('/extract-frames')) {
+  if (req.path.includes('/extract-frames') && req.headers['content-type']?.includes('multipart/form-data')) {
     return next();
   }
   return express.json()(req, res, next);
 });
+
+app.use(express.urlencoded({ extended: true }));
 
 // Serve frontend files from the root 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));

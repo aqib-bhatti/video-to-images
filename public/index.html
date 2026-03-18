@@ -300,22 +300,59 @@
         uploadForm.onsubmit = async (e) => {
             e.preventDefault();
             uploadBtn.disabled = true;
-            uploadBtn.innerText = '⏳ Uploading...';
+            uploadBtn.innerText = 'Initializing...';
 
-            const formData = new FormData(uploadForm);
+            const videoFile = uploadForm.video.files[0];
+            const fps = uploadForm.fps.value;
+            const webhookUrl = uploadForm.webhookUrl.value;
+
             try {
-                const res = await fetch('/api/v1/video/extract-frames', {
+                // 1. Get Presigned URL from our backend
+                uploadBtn.innerText = 'Getting Upload URL...';
+                const urlRes = await fetch('/api/v1/video/get-upload-url', {
                     method: 'POST',
-                    body: formData
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fileName: videoFile.name,
+                        contentType: videoFile.type
+                    })
                 });
-                const data = await res.json();
-                alert('✅ Job created! ID: ' + data.jobId);
+                
+                if (!urlRes.ok) throw new Error('Failed to get upload URL');
+                const { uploadUrl, publicUrl, jobId } = await urlRes.json();
+
+                // 2. Upload file directly to R2 from browser
+                uploadBtn.innerText = 'Uploading to Cloud (Direct)...';
+                const uploadRes = await fetch(uploadUrl, {
+                    method: 'PUT',
+                    body: videoFile,
+                    headers: { 'Content-Type': videoFile.type }
+                });
+
+                if (!uploadRes.ok) throw new Error('Failed to upload video to cloud storage');
+
+                // 3. Trigger frame extraction with the public URL
+                uploadBtn.innerText = 'Starting Process...';
+                const processRes = await fetch('/api/v1/video/extract-frames', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jobId, // Pass the same jobId
+                        videoUrl: publicUrl,
+                        fps,
+                        webhookUrl
+                    })
+                });
+
+                const data = await processRes.json();
+                alert('Job created! ID: ' + (data.jobId || jobId));
                 loadJobs();
             } catch (err) {
-                alert('❌ Upload failed: ' + err.message);
+                console.error(err);
+                alert('Process failed: ' + err.message);
             } finally {
                 uploadBtn.disabled = false;
-                uploadBtn.innerText = '🚀 Extract Frames';
+                uploadBtn.innerText = 'Extract Frames';
                 uploadForm.reset();
             }
         };

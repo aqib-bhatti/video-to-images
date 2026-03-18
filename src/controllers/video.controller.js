@@ -3,18 +3,47 @@ const { videoProcessingQueue } = require('../config/queue');
 const db = require('../config/db');
 const r2 = require('../config/r2');
 const { PutObjectCommand, DeleteObjectsCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { Upload } = require('@aws-sdk/lib-storage');
 const archiver = require('archiver');
 const axios = require('axios');
 const { Readable } = require('stream');
 
+const getUploadUrl = async (req, res) => {
+  const { fileName, contentType } = req.body;
+  const jobId = uuidv4();
+  
+  if (!fileName || !contentType) {
+    return res.status(400).json({ error: 'fileName and contentType are required' });
+  }
+
+  try {
+    const sanitizedName = fileName.replace(/[^\x00-\x7F]/g, "").replace(/\s+/g, "_");
+    const videoKey = `uploads/${jobId}-${sanitizedName}`;
+    
+    const command = new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: videoKey,
+      ContentType: contentType,
+    });
+
+    const uploadUrl = await getSignedUrl(r2, command, { expiresIn: 3600 });
+    const publicUrl = `${process.env.R2_PUBLIC_URL}/${videoKey}`;
+
+    res.json({ uploadUrl, publicUrl, jobId });
+  } catch (error) {
+    console.error('Error generating signed URL:', error);
+    res.status(500).json({ error: 'Failed to generate upload URL' });
+  }
+};
+
 const extractFrames = async (req, res) => {
   let videoUrl = req.body ? req.body.videoUrl : null;
   const fps = req.body ? req.body.fps || 1 : 1;
   const webhookUrl = req.body ? req.body.webhookUrl : null;
-  const jobId = uuidv4();
+  const jobId = req.body && req.body.jobId ? req.body.jobId : uuidv4();
 
-  // If a file was uploaded, stream it directly to R2
+  // If a file was uploaded (old method), stream it directly to R2
   if (req.file) {
     try {
       const videoKey = `uploads/${jobId}-${req.file.originalname}`;
@@ -235,6 +264,7 @@ const deleteJobData = async (job) => {
 };
 
 module.exports = {
+  getUploadUrl,
   extractFrames,
   getJobStatus,
   getAllJobs,
