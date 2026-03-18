@@ -1,6 +1,7 @@
 const { Queue } = require('bullmq');
 
-const redisConnection = {
+// Use Upstash Redis URL from environment variables for Vercel, or fallback to local Redis
+const redisConnection = process.env.REDIS_URL || {
   host: 'localhost',
   port: 6379,
 };
