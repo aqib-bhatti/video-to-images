@@ -2,10 +2,10 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const videoRoutes = require('./src/routes/video.routes');
-const setupDatabase = require('./src/db/setup');
+const videoRoutes = require('../src/routes/video.routes');
+const setupDatabase = require('../src/db/setup');
 
-// Setup the database
+// Setup database on start
 setupDatabase();
 
 // Start the worker
