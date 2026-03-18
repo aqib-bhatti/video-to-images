@@ -1,0 +1,17 @@
+# Dependencies
+/node_modules
+
+# Environment variables
+.env
+
+# SQLite Database
+*.sqlite
+*.sqlite-journal
+
+# Local Uploads & Processed Files (if any)
+/uploads
+/processed_frames
+
+# OS-specific
+.DS_Store
+Thumbs.db
