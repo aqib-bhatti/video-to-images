@@ -1,6 +1,6 @@
 const { Worker } = require('bullmq');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegStatic = require('ffmpeg-static');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -10,7 +10,7 @@ const db = require('../config/db');
 const r2 = require('../config/r2');
 const axios = require('axios');
 
-ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const worker = new Worker('video-processing', async (job) => {
   const { jobId, videoUrl, fps, webhookUrl } = job.data;

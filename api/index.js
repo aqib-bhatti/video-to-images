@@ -9,7 +9,7 @@ const setupDatabase = require('../src/db/setup');
 setupDatabase();
 
 // Start the worker
-require('./src/workers/video.worker');
+require('../src/workers/video.worker');
 
 const app = express();
 const port = 3000;
@@ -17,12 +17,12 @@ const port = 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve frontend files
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve frontend files from the root 'public' directory
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Fallback route to serve index.html
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, '../public', 'index.html'));
 });
 
 app.use('/api/v1/video', videoRoutes);
