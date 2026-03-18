@@ -35,6 +35,12 @@ app.get('/', (req, res) => {
 
 app.use('/api/v1/video', videoRoutes);
 
-app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
-});
+// Export the app for Vercel
+module.exports = app;
+
+// Only listen if not running on Vercel
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+  });
+}
