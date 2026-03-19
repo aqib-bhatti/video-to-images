@@ -341,6 +341,45 @@ const confirmSaveFrames = async (req, res) => {
     const query = 'UPDATE jobs SET frames = ?, status = ? WHERE jobId = ?';
     db.prepare(query).run(JSON.stringify(permanentUrls), 'completed', jobId);
 
+    // 4. Cleanup: Delete the entire temp folder for this job and the original video
+    const job = db.prepare('SELECT videoUrl FROM jobs WHERE jobId = ?').get(jobId);
+    
+    // Run cleanup in background to not block the response
+    (async () => {
+      try {
+        // Delete original video if it's in R2
+        if (job && job.videoUrl && job.videoUrl.includes(process.env.R2_PUBLIC_URL)) {
+          const videoKey = job.videoUrl.replace(`${process.env.R2_PUBLIC_URL}/`, '');
+          await r2.send(new DeleteObjectCommand({
+            Bucket: process.env.R2_BUCKET_NAME,
+            Key: videoKey
+          }));
+        }
+
+        // Delete all files in temp/jobId/
+        // First list them, then delete
+        const { ListObjectsV2Command } = require('@aws-sdk/client-s3');
+        const listParams = {
+          Bucket: process.env.R2_BUCKET_NAME,
+          Prefix: `temp/${jobId}/`
+        };
+        const listedObjects = await r2.send(new ListObjectsV2Command(listParams));
+
+        if (listedObjects.Contents && listedObjects.Contents.length > 0) {
+          const deleteParams = {
+            Bucket: process.env.R2_BUCKET_NAME,
+            Delete: {
+              Objects: listedObjects.Contents.map(({ Key }) => ({ Key }))
+            }
+          };
+          await r2.send(new DeleteObjectsCommand(deleteParams));
+        }
+        console.log(`Cleanup completed for job ${jobId}: Temp files and video deleted.`);
+      } catch (cleanupErr) {
+        console.error(`Cleanup failed for job ${jobId}:`, cleanupErr.message);
+      }
+    })();
+
     res.json({ message: `Successfully saved ${permanentUrls.length} images!`, savedCount: permanentUrls.length });
   } catch (error) {
     console.error('Error in confirmSaveFrames:', error);
@@ -373,13 +412,19 @@ const downloadSelectedFrames = async (req, res) => {
           responseType: 'stream'
         });
         const filename = `selected_frame_${(index + 1).toString().padStart(4, '0')}.png`;
-        archive.append(response.data, { name: filename });
+        
+        // Use a promise to wait for the archive to fully consume the stream
+        return new Promise((resolve, reject) => {
+          archive.append(response.data, { name: filename });
+          response.data.on('end', resolve);
+          response.data.on('error', reject);
+        });
       } catch (err) {
         console.error(`Failed to download selected frame from ${url}:`, err.message);
       }
     });
 
-    // Wait for all downloads to be added to the archive
+    // Wait for all downloads to be added and processed by the archive
     await Promise.all(downloadPromises);
     await archive.finalize();
   } catch (error) {

@@ -86,20 +86,53 @@ const worker = new Worker('video-processing', async (job) => {
   // Update job status to 'processing'
   await updateStatus(jobId, { status: 'processing', startedAt: new Date().toISOString() });
 
+  const localVideoPath = path.join(os.tmpdir(), `video_${jobId}.mp4`);
+
   try {
+    // Check cancellation again before downloading
+    try {
+      await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+    } catch (err) {
+      console.log(`Job ${jobId} was cancelled before download. Stopping.`);
+      return;
+    }
+
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
+    // 0. Download video locally to avoid FFmpeg SIGSEGV on streaming
+    console.log(`Downloading video locally for job ${jobId}...`);
+    const writer = fs.createWriteStream(localVideoPath);
+    const response = await axios({
+      url: videoUrl,
+      method: 'GET',
+      responseType: 'stream'
+    });
+
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', (err) => {
+        writer.close();
+        reject(err);
+      });
+    });
+    console.log(`Video downloaded to ${localVideoPath}`);
+
+    // Check cancellation again after download
+    try {
+      await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+    } catch (err) {
+      console.log(`Job ${jobId} was cancelled after download. Stopping.`);
+      if (fs.existsSync(localVideoPath)) fs.unlinkSync(localVideoPath);
+      return;
+    }
+
     // 1. Extract frames locally
     await new Promise((resolve, reject) => {
-      let command = ffmpeg(videoUrl)
-        .inputOptions([
-          '-reconnect 1',
-          '-reconnect_at_eof 1',
-          '-reconnect_streamed 1',
-          '-reconnect_delay_max 5'
-        ])
+      let command = ffmpeg(localVideoPath)
         .on('start', (cmd) => console.log('FFmpeg started with cmd:', cmd))
         .on('end', () => {
           console.log('FFmpeg finished extraction.');
@@ -177,18 +210,34 @@ const worker = new Worker('video-processing', async (job) => {
       }
     }
 
-    // 5. Clean up local frames
+    // 5. Clean up local files (frames and original video)
     try {
       if (fs.existsSync(outputDir)) {
         fs.rmSync(outputDir, { recursive: true, force: true });
       }
-      console.log(`Local temporary frames for job ${jobId} deleted.`);
+      if (fs.existsSync(localVideoPath)) {
+        fs.unlinkSync(localVideoPath);
+      }
+      console.log(`Local temporary files for job ${jobId} deleted.`);
     } catch (cleanupErr) {
       console.error(`Failed to cleanup local files for job ${jobId}:`, cleanupErr);
     }
 
   } catch (error) {
     console.error(`Job ${jobId} failed:`, error);
+    
+    // Cleanup on error
+    try {
+      if (fs.existsSync(outputDir)) {
+        fs.rmSync(outputDir, { recursive: true, force: true });
+      }
+      if (fs.existsSync(localVideoPath)) {
+        fs.unlinkSync(localVideoPath);
+      }
+    } catch (cleanupErr) {
+      console.error(`Failed to cleanup local files after error for job ${jobId}:`, cleanupErr);
+    }
+
     await updateStatus(jobId, { status: 'failed', failedAt: new Date().toISOString(), error: error.message });
 
     if (webhookUrl) {
