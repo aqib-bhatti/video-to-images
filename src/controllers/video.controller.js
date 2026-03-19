@@ -43,6 +43,8 @@ const extractFrames = async (req, res) => {
   const webhookUrl = req.body ? req.body.webhookUrl : null;
   const jobId = req.body && req.body.jobId ? req.body.jobId : uuidv4();
 
+  console.log(`📩 Extract frames request: jobId=${jobId}, videoUrl=${videoUrl}, webhookUrl=${webhookUrl}`);
+
   // If a file was uploaded (old method), stream it directly to R2
   if (req.file) {
     try {
@@ -79,7 +81,7 @@ const extractFrames = async (req, res) => {
     videoUrl,
     fps,
     webhookUrl,
-    status: 'pending',
+    status: 'queued',
     createdAt: new Date().toISOString(),
   };
 
@@ -89,7 +91,8 @@ const extractFrames = async (req, res) => {
     stmt.run(jobData.jobId, jobData.videoUrl, jobData.fps, jobData.status, jobData.createdAt, jobData.webhookUrl);
 
     // Add job to the queue
-    await videoProcessingQueue.add('process-video', jobData);
+    const job = await videoProcessingQueue.add('process-video', jobData, { jobId: jobData.jobId });
+    console.log(`✅ Job ${job.id} successfully added to Redis queue`);
     res.status(202).json({ jobId });
   } catch (error) {
     console.error('Error creating job:', error);
@@ -295,6 +298,20 @@ const updateJobStatus = (req, res) => {
     params.push(jobId);
 
     db.prepare(query).run(...params);
+
+    // Broadcast the update to all connected WebSocket clients
+    const wss = req.app.get('wss');
+    if (wss) {
+      const updatedJob = db.prepare('SELECT * FROM jobs WHERE jobId = ?').get(jobId);
+      if (updatedJob.frames) updatedJob.frames = JSON.parse(updatedJob.frames);
+      
+      wss.clients.forEach((client) => {
+        if (client.readyState === 1) { // WebSocket.OPEN
+          client.send(JSON.stringify({ type: 'JOB_UPDATE', payload: updatedJob }));
+        }
+      });
+    }
+
     res.json({ message: 'Status updated' });
   } catch (err) {
     console.error('Error updating job status:', err);

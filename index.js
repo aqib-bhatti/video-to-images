@@ -4,11 +4,12 @@ const express = require('express');
 const path = require('path');
 const videoRoutes = require('./src/routes/video.routes');
 const setupDatabase = require('./src/db/setup');
+const { WebSocketServer } = require('ws');
 
 // Setup database on start
 setupDatabase();
 
-// Start the worker
+// Start the worker (Original flow)
 require('./src/workers/video.worker');
 
 const app = express();
@@ -40,7 +41,16 @@ module.exports = app;
 
 // Only listen if not running on Vercel
 if (!process.env.VERCEL) {
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     console.log(`Server is running on port: ${port}`);
   });
+
+  const wss = new WebSocketServer({ server });
+
+  wss.on('connection', (ws) => {
+    console.log('✅ Client connected to WebSocket');
+    ws.on('close', () => console.log('❌ Client disconnected'));
+  });
+
+  app.set('wss', wss);
 }

@@ -201,7 +201,7 @@
             display: inline-block;
         }
 
-        .status-pending { background: #fef3c7; color: #d97706; }
+        .status-queued { background: #fef3c7; color: #d97706; }
         .status-processing { background: #e0e7ff; color: #4338ca; }
         .status-previewing { background: #fef3c7; color: #d97706; }
         .status-completed { background: #d1fae5; color: #059669; }
@@ -397,7 +397,7 @@
                     
                     <div class="action-buttons" id="actions-${job.jobId}">
                         <div style="display: flex; gap: 10px; flex-wrap: wrap; width: 100%;">
-                            ${job.status === 'processing' || job.status === 'pending' ? `
+                            ${job.status === 'processing' || job.status === 'queued' ? `
                                 <button onclick="cancelJob('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">🛑 Cancel Job</button>
                             ` : ''}
                             ${job.status === 'previewing' ? `
@@ -477,7 +477,7 @@
                         const actions = document.getElementById(`actions-${job.jobId}`);
                         if (actions) {
                             actions.innerHTML = `
-                                ${job.status === 'processing' || job.status === 'pending' ? `
+                                ${job.status === 'processing' || job.status === 'queued' ? `
                                     <button onclick="cancelJob('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">🛑 Cancel Job</button>
                                 ` : ''}
                                 ${job.status === 'previewing' ? `
@@ -719,6 +719,56 @@
 
         loadJobs();
         setInterval(loadJobs, 2000);
+
+        // --- WebSocket Real-time Updates ---
+        function connectWebSocket() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}`;
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => console.log('✅ WebSocket Connected');
+            ws.onclose = () => {
+                console.log('❌ WebSocket Disconnected. Reconnecting in 3s...');
+                setTimeout(connectWebSocket, 3000);
+            };
+            ws.onerror = (err) => console.error('WebSocket Error:', err);
+
+            ws.onmessage = (event) => {
+                try {
+                    const { type, payload } = JSON.parse(event.data);
+                    if (type === 'JOB_UPDATE') {
+                        console.log('Received JOB_UPDATE:', payload);
+                        updateJobCard(payload);
+                    }
+                } catch (e) {
+                    console.error('Error parsing WebSocket message:', e);
+                }
+            };
+        }
+
+        function updateJobCard(job) {
+            const jobContainer = document.getElementById(`job-${job.jobId}`);
+            if (jobContainer) {
+                // If status or frame count is different, just re-render the whole card
+                const oldStatus = previousStatuses[job.jobId];
+                const oldFrameCount = displayedFrames[job.jobId] ? displayedFrames[job.jobId].size : 0;
+                const newFrameCount = job.frames ? job.frames.length : 0;
+
+                if (oldStatus !== job.status || oldFrameCount !== newFrameCount) {
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = generateJobCard(job);
+                    jobContainer.replaceWith(tempDiv.firstChild);
+                }
+            } else {
+                // New job, add it to the top
+                jobsList.insertAdjacentHTML('afterbegin', generateJobCard(job));
+            }
+            // Update trackers
+            previousStatuses[job.jobId] = job.status;
+            displayedFrames[job.jobId] = new Set(job.frames || []);
+        }
+
+        connectWebSocket();
     </script>
 </body>
 </html>

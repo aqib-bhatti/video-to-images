@@ -5,9 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js",
+    "start": "NODE_ENV=production node index.js",
     "dev": "nodemon index.js",
-    "worker": "node -e \"require('./src/workers/video.worker')\""
+    "worker": "node src/workers/video.worker.js"
   },
   "keywords": [],
   "author": "",
@@ -22,6 +22,7 @@
     "axios": "^1.13.6",
     "better-sqlite3": "^12.8.0",
     "bullmq": "^5.71.0",
+    "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
@@ -30,6 +31,7 @@
     "mongoose": "^9.3.0",
     "multer": "^2.1.1",
     "nodemon": "^3.1.14",
-    "uuid": "^8.3.2"
+    "uuid": "^8.3.2",
+    "ws": "^8.19.0"
   }
 }

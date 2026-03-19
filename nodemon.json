@@ -1,0 +1,12 @@
+{
+  "watch": ["src/", "index.js"],
+  "ext": "js,json",
+  "ignore": [
+    "*.sqlite",
+    "*.sqlite-journal",
+    "tmp/*",
+    "public/*",
+    "node_modules/*"
+  ],
+  "exec": "node index.js"
+}
