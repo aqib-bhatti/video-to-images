@@ -89,18 +89,6 @@ const worker = new Worker('video-processing', async (job) => {
   const localVideoPath = path.join(os.tmpdir(), `video_${jobId}.mp4`);
 
   try {
-    // Check cancellation again before downloading
-    try {
-      await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
-    } catch (err) {
-      console.log(`Job ${jobId} was cancelled before download. Stopping.`);
-      return;
-    }
-
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
     // 0. Download video locally to avoid FFmpeg SIGSEGV on streaming
     console.log(`Downloading video locally for job ${jobId}...`);
     const writer = fs.createWriteStream(localVideoPath);
@@ -120,15 +108,6 @@ const worker = new Worker('video-processing', async (job) => {
       });
     });
     console.log(`Video downloaded to ${localVideoPath}`);
-
-    // Check cancellation again after download
-    try {
-      await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
-    } catch (err) {
-      console.log(`Job ${jobId} was cancelled after download. Stopping.`);
-      if (fs.existsSync(localVideoPath)) fs.unlinkSync(localVideoPath);
-      return;
-    }
 
     // 1. Extract frames locally
     await new Promise((resolve, reject) => {
@@ -157,17 +136,6 @@ const worker = new Worker('video-processing', async (job) => {
     const uploadedUrls = [];
 
     for (const file of frameFiles) {
-      // Check cancellation via API/Local DB during the loop
-      try {
-        await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
-      } catch (err) {
-        console.log(`Job ${jobId} was cancelled during frame upload. Stopping.`);
-        if (fs.existsSync(outputDir)) {
-          fs.rmSync(outputDir, { recursive: true, force: true });
-        }
-        return;
-      }
-
       const filePath = path.join(outputDir, file);
       const fileContent = fs.readFileSync(filePath);
       const r2Key = `temp/${jobId}/${file}`; // Upload to temp folder
