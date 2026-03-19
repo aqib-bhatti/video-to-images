@@ -14,8 +14,8 @@ const axios = require('axios');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const updateStatus = async (jobId, data) => {
-  const vercelUrl = process.env.VERCEL_URL || 'http://localhost:3000'; // Fallback for local testing
-  const apiEndpoint = `${vercelUrl}/api/v1/video/jobs/${jobId}/status`;
+  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
+  const apiEndpoint = `${publicUrl}/api/v1/video/jobs/${jobId}/status`;
 
   // 1. Update local DB (if running in same environment as API)
   try {
@@ -54,12 +54,12 @@ const updateStatus = async (jobId, data) => {
     // console.log(`Local DB update skipped for job ${jobId}`);
   }
 
-  // 2. Update Vercel API (Crucial for remote workers)
+  // 2. Update API (Crucial for remote workers)
   try {
     await axios.post(apiEndpoint, data);
-    console.log(`Vercel API updated for job ${jobId}`);
+    console.log(`API updated for job ${jobId}`);
   } catch (err) {
-    console.error(`Failed to update Vercel API for job ${jobId}:`, err.message);
+    console.error(`Failed to update API for job ${jobId}:`, err.message);
   }
 };
 
@@ -69,9 +69,9 @@ const worker = new Worker('video-processing', async (job) => {
   const outputDir = path.join(os.tmpdir(), 'videotoimage', jobId);
 
   // Initial check via API/Local DB
-  const vercelUrl = process.env.VERCEL_URL || 'http://localhost:3000';
+  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
   try {
-    const res = await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+    const res = await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
     if (!res.data) return console.log(`Job ${jobId} not found. Stopping.`);
   } catch (err) {
     // If API check fails, fallback to local DB check
@@ -91,7 +91,7 @@ const worker = new Worker('video-processing', async (job) => {
   try {
     // Check cancellation again before downloading
     try {
-      await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+      await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
     } catch (err) {
       console.log(`Job ${jobId} was cancelled before download. Stopping.`);
       return;
@@ -123,7 +123,7 @@ const worker = new Worker('video-processing', async (job) => {
 
     // Check cancellation again after download
     try {
-      await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+      await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
     } catch (err) {
       console.log(`Job ${jobId} was cancelled after download. Stopping.`);
       if (fs.existsSync(localVideoPath)) fs.unlinkSync(localVideoPath);
@@ -159,7 +159,7 @@ const worker = new Worker('video-processing', async (job) => {
     for (const file of frameFiles) {
       // Check cancellation via API/Local DB during the loop
       try {
-        await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+        await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
       } catch (err) {
         console.log(`Job ${jobId} was cancelled during frame upload. Stopping.`);
         if (fs.existsSync(outputDir)) {

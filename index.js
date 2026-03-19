@@ -12,7 +12,8 @@ setupDatabase();
 require('./src/workers/video.worker');
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
+const host = '0.0.0.0';
 
 // Disable body parsing for large multipart uploads to enable streaming
 app.use((req, res, next) => {
@@ -34,12 +35,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/v1/video', videoRoutes);
 
-// Export the app for Vercel
-module.exports = app;
-
-// Only listen if not running on Vercel
-if (!process.env.VERCEL) {
-  app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
-  });
-}
+// Start the server
+app.listen(port, host, () => {
+  console.log(`Server is running on port ${port}`);
+});
