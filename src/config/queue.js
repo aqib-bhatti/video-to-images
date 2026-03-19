@@ -1,24 +1,23 @@
 const { Queue } = require('bullmq');
+const IORedis = require('ioredis');
 
 // Upstash Redis URL configuration
-let redisUrl = process.env.REDIS_URL;
+const redisUrl = process.env.REDIS_URL;
 
-// Agar user ne REST_URL aur TOKEN diya hai, to hum URL construct kar sakte hain (lekin rediss:// behtar hai)
-if (!redisUrl && process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  const host = process.env.UPSTASH_REDIS_REST_URL.replace('https://', '');
-  const password = process.env.UPSTASH_REDIS_REST_TOKEN;
-  redisUrl = `rediss://default:${password}@${host}:6379`;
-}
+let redisConnection;
 
-const redisConnection = redisUrl ? redisUrl : {
-  host: '127.0.0.1',
-  port: 6379,
-};
-
-// Debugging
 if (redisUrl) {
-  console.log('✅ Connecting to Redis via URL');
+  // Use IORedis for better URL parsing and TLS support (Upstash requirement)
+  redisConnection = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+  });
+  console.log('✅ Redis Connection initialized via URL');
 } else {
+  redisConnection = {
+    host: '127.0.0.1',
+    port: 6379,
+    maxRetriesPerRequest: null,
+  };
   console.log('⚠️ No REDIS_URL found, using localhost:6379');
 }
 
