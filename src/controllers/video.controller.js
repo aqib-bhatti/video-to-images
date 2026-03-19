@@ -2,7 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const { videoProcessingQueue } = require('../config/queue');
 const db = require('../config/db');
 const r2 = require('../config/r2');
-const { PutObjectCommand, DeleteObjectsCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { CopyObjectCommand, PutObjectCommand, DeleteObjectsCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { Upload } = require('@aws-sdk/lib-storage');
 const archiver = require('archiver');
@@ -193,12 +193,6 @@ const downloadJobFrames = async (req, res) => {
 
     const archive = archiver('zip', { zlib: { level: 9 } });
     
-    // Listen for when the response finishes
-    res.on('finish', async () => {
-      console.log(`Download finished for job ${jobId}. Starting auto-deletion...`);
-      await deleteJobData(job);
-    });
-
     archive.pipe(res);
 
     // Download each frame from R2 and add to zip
@@ -263,6 +257,181 @@ const deleteJobData = async (job) => {
   }
 };
 
+const updateJobStatus = (req, res) => {
+  const { jobId } = req.params;
+  const { status, frames, startedAt, completedAt, failedAt, error } = req.body;
+
+  try {
+    const jobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
+    if (!jobCheck) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    let query = 'UPDATE jobs SET status = ?';
+    const params = [status];
+
+    if (frames) {
+      query += ', frames = ?';
+      params.push(JSON.stringify(frames));
+    }
+    if (startedAt) {
+      query += ', startedAt = ?';
+      params.push(startedAt);
+    }
+    if (completedAt) {
+      query += ', completedAt = ?';
+      params.push(completedAt);
+    }
+    if (failedAt) {
+      query += ', failedAt = ?';
+      params.push(failedAt);
+    }
+    if (error) {
+      query += ', error = ?';
+      params.push(error);
+    }
+
+    query += ' WHERE jobId = ?';
+    params.push(jobId);
+
+    db.prepare(query).run(...params);
+    res.json({ message: 'Status updated' });
+  } catch (err) {
+    console.error('Error updating job status:', err);
+    res.status(500).json({ error: 'Failed to update job status' });
+  }
+};
+
+const confirmSaveFrames = async (req, res) => {
+  const { jobId } = req.params;
+  const { urls } = req.body;
+
+  if (!urls || !Array.isArray(urls) || urls.length === 0) {
+    return res.status(400).json({ error: 'No images selected to save' });
+  }
+
+  try {
+    // 1. Prepare all copy operations
+    const copyPromises = urls.map(async (url) => {
+      const oldKey = url.replace(`${process.env.R2_PUBLIC_URL}/`, '');
+      const newKey = oldKey.replace('temp/', 'permanent/');
+      
+      try {
+        await r2.send(new CopyObjectCommand({
+          Bucket: process.env.R2_BUCKET_NAME,
+          CopySource: encodeURI(`${process.env.R2_BUCKET_NAME}/${oldKey}`),
+          Key: newKey
+        }));
+        return `${process.env.R2_PUBLIC_URL}/${newKey}`;
+      } catch (copyErr) {
+        console.error(`Failed to copy ${oldKey}:`, copyErr.message);
+        return null; // Skip failed ones
+      }
+    });
+
+    // 2. Execute all copies in parallel
+    const results = await Promise.all(copyPromises);
+    const permanentUrls = results.filter(url => url !== null);
+
+    if (permanentUrls.length === 0) {
+      return res.status(500).json({ error: 'Failed to save any images to cloud' });
+    }
+
+    // 3. Update the DB with permanent URLs
+    const query = 'UPDATE jobs SET frames = ?, status = ? WHERE jobId = ?';
+    db.prepare(query).run(JSON.stringify(permanentUrls), 'completed', jobId);
+
+    res.json({ message: `Successfully saved ${permanentUrls.length} images!`, savedCount: permanentUrls.length });
+  } catch (error) {
+    console.error('Error in confirmSaveFrames:', error);
+    res.status(500).json({ error: error.message || 'Failed to save selected images' });
+  }
+};
+
+const downloadSelectedFrames = async (req, res) => {
+  const { jobId } = req.params;
+  const { urls } = req.body;
+
+  if (!urls || !Array.isArray(urls) || urls.length === 0) {
+    return res.status(400).json({ error: 'Selected URLs are required' });
+  }
+
+  try {
+    // Set headers for zip download
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename=selected-frames-${jobId}.zip`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.pipe(res);
+
+    // Download selected frames in parallel
+    const downloadPromises = urls.map(async (url, index) => {
+      try {
+        const response = await axios({
+          url,
+          method: 'GET',
+          responseType: 'stream'
+        });
+        const filename = `selected_frame_${(index + 1).toString().padStart(4, '0')}.png`;
+        archive.append(response.data, { name: filename });
+      } catch (err) {
+        console.error(`Failed to download selected frame from ${url}:`, err.message);
+      }
+    });
+
+    // Wait for all downloads to be added to the archive
+    await Promise.all(downloadPromises);
+    await archive.finalize();
+  } catch (error) {
+    console.error('Error creating selected zip download:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate zip file' });
+    }
+  }
+};
+
+const deleteSelectedFrames = async (req, res) => {
+  const { jobId } = req.params;
+  const { urls } = req.body;
+
+  if (!urls || !Array.isArray(urls) || urls.length === 0) {
+    return res.status(400).json({ error: 'No images selected to delete' });
+  }
+
+  try {
+    // 1. Delete from R2 in parallel
+    const deletePromises = urls.map(async (url) => {
+      const key = url.replace(`${process.env.R2_PUBLIC_URL}/`, '');
+      try {
+        await r2.send(new DeleteObjectCommand({
+          Bucket: process.env.R2_BUCKET_NAME,
+          Key: key
+        }));
+        return true;
+      } catch (err) {
+        console.error(`Failed to delete ${key} from R2:`, err.message);
+        return false;
+      }
+    });
+
+    await Promise.all(deletePromises);
+
+    // 2. Update DB: Get current frames and filter out the deleted ones
+    const job = db.prepare('SELECT frames FROM jobs WHERE jobId = ?').get(jobId);
+    if (job && job.frames) {
+      const currentFrames = JSON.parse(job.frames);
+      const updatedFrames = currentFrames.filter(f => !urls.includes(f));
+      
+      db.prepare('UPDATE jobs SET frames = ? WHERE jobId = ?').run(JSON.stringify(updatedFrames), jobId);
+    }
+
+    res.json({ message: `Successfully deleted ${urls.length} images!`, deletedCount: urls.length });
+  } catch (error) {
+    console.error('Error in deleteSelectedFrames:', error);
+    res.status(500).json({ error: 'Failed to delete selected images' });
+  }
+};
+
 module.exports = {
   getUploadUrl,
   extractFrames,
@@ -271,4 +440,8 @@ module.exports = {
   deleteAllJobs,
   cancelJob,
   downloadJobFrames,
+  updateJobStatus,
+  downloadSelectedFrames,
+  confirmSaveFrames,
+  deleteSelectedFrames
 };

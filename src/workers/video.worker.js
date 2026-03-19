@@ -1,4 +1,5 @@
 const { Worker } = require('bullmq');
+require('dotenv').config();
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const fs = require('fs');
@@ -12,26 +13,77 @@ const axios = require('axios');
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
+const updateStatus = async (jobId, data) => {
+  const vercelUrl = process.env.VERCEL_URL || 'http://localhost:3000'; // Fallback for local testing
+  const apiEndpoint = `${vercelUrl}/api/v1/video/jobs/${jobId}/status`;
+
+  // 1. Update local DB (if running in same environment as API)
+  try {
+    const { status, frames, startedAt, completedAt, failedAt, error } = data;
+    let query = 'UPDATE jobs SET status = ?';
+    const params = [status];
+
+    if (frames) {
+      query += ', frames = ?';
+      params.push(JSON.stringify(frames));
+    }
+    if (startedAt) {
+      query += ', startedAt = ?';
+      params.push(startedAt);
+    }
+    if (completedAt) {
+      query += ', completedAt = ?';
+      params.push(completedAt);
+    }
+    if (failedAt) {
+      query += ', failedAt = ?';
+      params.push(failedAt);
+    }
+    if (error) {
+      query += ', error = ?';
+      params.push(error);
+    }
+
+    query += ' WHERE jobId = ?';
+    params.push(jobId);
+
+    db.prepare(query).run(...params);
+    console.log(`Local DB updated for job ${jobId}`);
+  } catch (err) {
+    // Silently fail local DB update if it's not present (common when running worker remotely)
+    // console.log(`Local DB update skipped for job ${jobId}`);
+  }
+
+  // 2. Update Vercel API (Crucial for remote workers)
+  try {
+    await axios.post(apiEndpoint, data);
+    console.log(`Vercel API updated for job ${jobId}`);
+  } catch (err) {
+    console.error(`Failed to update Vercel API for job ${jobId}:`, err.message);
+  }
+};
+
 const worker = new Worker('video-processing', async (job) => {
   const { jobId, videoUrl, fps, webhookUrl } = job.data;
-  // Use system temp directory instead of project directory
   const outputDir = path.join(os.tmpdir(), 'videotoimage', jobId);
 
-  // Initial check: If job is already cancelled, don't start
-  const initialJobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
-  if (!initialJobCheck) {
-    return console.log(`Job ${jobId} was cancelled before processing could start.`);
+  // Initial check via API/Local DB
+  const vercelUrl = process.env.VERCEL_URL || 'http://localhost:3000';
+  try {
+    const res = await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+    if (!res.data) return console.log(`Job ${jobId} not found. Stopping.`);
+  } catch (err) {
+    // If API check fails, fallback to local DB check
+    const initialJobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
+    if (!initialJobCheck) {
+      return console.log(`Job ${jobId} was cancelled before processing could start.`);
+    }
   }
 
   console.log(`Starting job ${jobId} for video: ${videoUrl}`);
 
-  // Update job status to 'processing' in DB
-  try {
-    const updateStmt = db.prepare('UPDATE jobs SET status = ?, startedAt = ? WHERE jobId = ?');
-    updateStmt.run('processing', new Date().toISOString(), jobId);
-  } catch (err) {
-    console.error(`Failed to update status to processing for job ${jobId}:`, err);
-  }
+  // Update job status to 'processing'
+  await updateStatus(jobId, { status: 'processing', startedAt: new Date().toISOString() });
 
   try {
     if (!fs.existsSync(outputDir)) {
@@ -51,7 +103,6 @@ const worker = new Worker('video-processing', async (job) => {
           reject(err);
         });
 
-      // If fps is provided, use it. Otherwise, extract ALL frames.
       if (fps) {
         command.outputOptions(`-vf fps=${fps}`);
       }
@@ -59,28 +110,27 @@ const worker = new Worker('video-processing', async (job) => {
       command.output(path.join(outputDir, 'frame_%04d.png')).run();
     });
 
-    // 2. Upload frames to Cloudflare R2 and update DB incrementally
+    // 2. Upload frames to Cloudflare R2 and update status incrementally
     const frameFiles = fs.readdirSync(outputDir);
     console.log(`Found ${frameFiles.length} frames to upload.`);
 
     const uploadedUrls = [];
-    const updateStmt = db.prepare('UPDATE jobs SET frames = ? WHERE jobId = ?');
 
     for (const file of frameFiles) {
-      // Check if job was cancelled during the loop
-      const loopJobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
-      if (!loopJobCheck) {
+      // Check cancellation via API/Local DB during the loop
+      try {
+        await axios.get(`${vercelUrl}/api/v1/video/jobs/${jobId}`);
+      } catch (err) {
         console.log(`Job ${jobId} was cancelled during frame upload. Stopping.`);
-        // Clean up partially created temp files
         if (fs.existsSync(outputDir)) {
           fs.rmSync(outputDir, { recursive: true, force: true });
         }
-        return; // Exit the worker process
+        return;
       }
 
       const filePath = path.join(outputDir, file);
       const fileContent = fs.readFileSync(filePath);
-      const r2Key = `frames/${jobId}/${file}`;
+      const r2Key = `temp/${jobId}/${file}`; // Upload to temp folder
 
       const uploadParams = {
         Bucket: process.env.R2_BUCKET_NAME,
@@ -93,23 +143,20 @@ const worker = new Worker('video-processing', async (job) => {
       const publicUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
       uploadedUrls.push(publicUrl);
 
-      // Update database after each upload so frontend can show it "live"
-      updateStmt.run(JSON.stringify(uploadedUrls), jobId);
-      console.log(`Uploaded and updated DB for frame: ${file}`);
+      // Update status after each upload
+      await updateStatus(jobId, { status: 'processing', frames: uploadedUrls });
+      console.log(`Uploaded and updated status for frame: ${file}`);
     }
 
-    // 3. Update job status to 'completed' in DB
-    const completeStmt = db.prepare('UPDATE jobs SET status = ?, completedAt = ? WHERE jobId = ?');
-    completeStmt.run('completed', new Date().toISOString(), jobId);
+    // 3. Update job status to 'previewing' (User must now select frames to save)
+    await updateStatus(jobId, { status: 'previewing', completedAt: new Date().toISOString(), frames: uploadedUrls });
     
-    console.log(`Job ${jobId} completed successfully.`);
+    console.log(`Job ${jobId} is ready for preview.`);
 
-    // 4. Notify via Webhook if provided (Simplified Notification)
+    // 4. Notify via Webhook
     if (webhookUrl) {
       try {
-        // Create a readable list of all frame URLs for Slack
         const framesList = uploadedUrls.map((url, index) => `${index + 1}. ${url}`).join('\n');
-        
         await axios.post(webhookUrl, {
           text: `✅ *Process Done!*\n*Job ID:* ${jobId}\n*Status:* Completed\n*Total Frames:* ${uploadedUrls.length}\n\n*Frames List:*\n${framesList}`,
           message: "Process Done",
@@ -123,7 +170,7 @@ const worker = new Worker('video-processing', async (job) => {
       }
     }
 
-    // 5. Clean up local frames after successful upload
+    // 5. Clean up local frames
     try {
       if (fs.existsSync(outputDir)) {
         fs.rmSync(outputDir, { recursive: true, force: true });
@@ -135,26 +182,19 @@ const worker = new Worker('video-processing', async (job) => {
 
   } catch (error) {
     console.error(`Job ${jobId} failed:`, error);
-    // Update job status to 'failed' in DB
-    try {
-        const failStmt = db.prepare('UPDATE jobs SET status = ?, failedAt = ?, error = ? WHERE jobId = ?');
-        failStmt.run('failed', new Date().toISOString(), error.message, jobId);
+    await updateStatus(jobId, { status: 'failed', failedAt: new Date().toISOString(), error: error.message });
 
-        // Notify via Webhook about failure if provided
-        if (webhookUrl) {
-          try {
-            await axios.post(webhookUrl, {
-              message: "Process Failed",
-              jobId,
-              status: 'failed',
-              error: error.message
-            });
-          } catch (webhookErr) {
-            console.error(`Failed to notify webhook for failed job ${jobId}:`, webhookErr.message);
-          }
-        }
-    } catch (dbErr) {
-        console.error('Failed to update DB with error status:', dbErr);
+    if (webhookUrl) {
+      try {
+        await axios.post(webhookUrl, {
+          message: "Process Failed",
+          jobId,
+          status: 'failed',
+          error: error.message
+        });
+      } catch (webhookErr) {
+        console.error(`Failed to notify webhook for failed job ${jobId}:`, webhookErr.message);
+      }
     }
   }
 }, { connection: redisConnection });

@@ -12,7 +12,11 @@ router.post('/extract-frames', upload.single('video'), videoController.extractFr
 router.get('/jobs', videoController.getAllJobs);
 router.get('/jobs/:jobId', videoController.getJobStatus);
 router.get('/jobs/:jobId/download', videoController.downloadJobFrames);
+router.post('/jobs/:jobId/download-selected', videoController.downloadSelectedFrames);
+router.post('/jobs/:jobId/confirm-save', videoController.confirmSaveFrames);
+router.post('/jobs/:jobId/delete-selected', videoController.deleteSelectedFrames);
 router.post('/jobs/:jobId/cancel', videoController.cancelJob);
+router.post('/jobs/:jobId/status', videoController.updateJobStatus);
 router.delete('/jobs', videoController.deleteAllJobs);
 
 module.exports = router;

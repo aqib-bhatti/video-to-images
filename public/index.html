@@ -203,8 +203,20 @@
 
         .status-pending { background: #fef3c7; color: #d97706; }
         .status-processing { background: #e0e7ff; color: #4338ca; }
+        .status-previewing { background: #fef3c7; color: #d97706; }
         .status-completed { background: #d1fae5; color: #059669; }
         .status-failed { background: #fee2e2; color: #dc2626; }
+
+        .frame-item { position: relative; }
+        .frame-checkbox { 
+            position: absolute; 
+            top: 5px; 
+            left: 5px; 
+            z-index: 10; 
+            width: 20px; 
+            height: 20px; 
+            cursor: pointer;
+        }
 
         .frames-grid { 
             display: grid; 
@@ -230,6 +242,12 @@
             border-radius: 6px; 
             transition: transform 0.2s ease, box-shadow 0.2s ease; 
             border: 1px solid var(--border-color);
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes popIn {
+            0% { opacity: 0; transform: scale(0.5); }
+            100% { opacity: 1; transform: scale(1); }
         }
         
         .frames-grid img:hover { 
@@ -260,7 +278,7 @@
                 <input type="number" name="fps" min="1" placeholder="e.g. 1, 10, 30">
                 
                 <label>Webhook URL (Optional)</label>
-                <input type="url" name="webhookUrl" placeholder="https://your-api.com/webhook">
+                <input type="url" name="webhookUrl" placeholder="webhook">
                 
                 <button type="submit" class="btn btn-primary" id="uploadBtn" style="width: 100%;">
                     🚀 Extract Frames
@@ -360,10 +378,10 @@
         // Reusable function to generate Job HTML
         function generateJobCard(job, isSearchResult = false) {
             return `
-                <div class="job" ${isSearchResult ? 'style="border: 2px solid var(--primary-color);"' : ''}>
+                <div class="job" id="job-${job.jobId}" ${isSearchResult ? 'style="border: 2px solid var(--primary-color);"' : ''}>
                     <div class="job-header">
                         <div>
-                            <span class="badge status-${job.status}">${job.status}</span>
+                            <span class="badge status-${job.status}" id="status-${job.jobId}">${job.status}</span>
                         </div>
                         <div class="job-id" onclick="copyToClipboard('${job.jobId}')" title="Click to copy ID">
                             ${job.jobId}
@@ -373,57 +391,156 @@
                         📅 Created: ${new Date(job.createdAt).toLocaleString()}
                     </div>
                     
-                    ${job.error ? `<div style="background: #fee2e2; color: #dc2626; padding: 10px; border-radius: 6px; margin-top: 10px;"><strong>Error:</strong> ${job.error}</div>` : ''}
+                    <div id="error-${job.jobId}">
+                        ${job.error ? `<div style="background: #fee2e2; color: #dc2626; padding: 10px; border-radius: 6px; margin-top: 10px;"><strong>Error:</strong> ${job.error}</div>` : ''}
+                    </div>
                     
-                    <div class="action-buttons">
-                        ${job.status === 'processing' || job.status === 'pending' ? `
-                            <button onclick="cancelJob('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">🛑 Cancel Job</button>
-                        ` : ''}
-                        ${job.status === 'completed' ? `
-                            <a href="/api/v1/video/jobs/${job.jobId}/download" class="btn btn-success" style="text-decoration: none; padding: 8px 16px; font-size: 0.85rem;">⬇️ Download ZIP</a>
-                        ` : ''}
+                    <div class="action-buttons" id="actions-${job.jobId}">
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap; width: 100%;">
+                            ${job.status === 'processing' || job.status === 'pending' ? `
+                                <button onclick="cancelJob('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">🛑 Cancel Job</button>
+                            ` : ''}
+                            ${job.status === 'previewing' ? `
+                                <button onclick="saveSelected('${job.jobId}')" class="btn btn-success" style="padding: 8px 16px; font-size: 0.85rem;">☁️ Save Selected to Cloud</button>
+                                <button onclick="downloadSelected('${job.jobId}')" class="btn btn-primary" style="padding: 8px 16px; font-size: 0.85rem;">📥 Download Selected</button>
+                                <button onclick="deleteSelected('${job.jobId}')" class="btn btn-danger" style="padding: 8px 16px; font-size: 0.85rem;">🗑️ Delete Selected</button>
+                                <button onclick="toggleSelectAll('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">✅ Select/Deselect All</button>
+                                <button onclick="cancelJob('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">🛑 Cancel Job</button>
+                            ` : ''}
+                            ${job.status === 'completed' ? `
+                                <a href="/api/v1/video/jobs/${job.jobId}/download" class="btn btn-success" style="text-decoration: none; padding: 8px 16px; font-size: 0.85rem;">⬇️ Download All ZIP</a>
+                                <button onclick="downloadSelected('${job.jobId}')" class="btn btn-primary" style="padding: 8px 16px; font-size: 0.85rem;">📥 Download Selected</button>
+                                <button onclick="deleteSelected('${job.jobId}')" class="btn btn-danger" style="padding: 8px 16px; font-size: 0.85rem;">🗑️ Delete Selected</button>
+                                <button onclick="toggleSelectAll('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">✅ Select/Deselect All</button>
+                            ` : ''}
+                        </div>
                     </div>
 
-                    ${job.frames && job.frames.length > 0 ? `
-                        <div style="margin-top: 20px;">
-                            <strong style="color: var(--text-main); font-size: 0.95rem;">🖼️ Total Frames: ${job.frames.length}</strong>
-                            <div class="frames-grid">
-                                ${job.frames.map(f => `
-                                    <a href="${f}" target="_blank">
-                                        <img src="${f}" alt="frame" title="Click to open full size" loading="lazy">
-                                    </a>
-                                `).join('')}
+                    <div id="frames-section-${job.jobId}">
+                        ${job.frames && job.frames.length > 0 ? `
+                            <div style="margin-top: 20px;">
+                                <strong style="color: var(--text-main); font-size: 0.95rem;">🖼️ Total Frames: <span id="count-${job.jobId}">${job.frames.length}</span></strong>
+                                <div class="frames-grid" id="grid-${job.jobId}">
+                                    ${job.frames.map(f => `
+                                        <div class="frame-item">
+                                            <input type="checkbox" class="frame-checkbox" data-url="${f}">
+                                            <a href="${f}" target="_blank">
+                                                <img src="${f}" alt="frame" title="Click to open full size" loading="lazy">
+                                            </a>
+                                        </div>
+                                    `).join('')}
+                                </div>
                             </div>
-                        </div>
-                    ` : ''}
+                        ` : ''}
+                    </div>
                 </div>
             `;
         }
+
+        const displayedFrames = {}; // Track URLs already shown per job
 
         async function loadJobs() {
             try {
                 const res = await fetch('/api/v1/video/jobs');
                 const jobs = await res.json();
 
+                // 1. If job count changed, re-render everything
+                if (Object.keys(previousStatuses).length !== jobs.length) {
+                    jobsList.innerHTML = jobs.map(job => generateJobCard(job)).join('');
+                    
+                    // Populate initial displayedFrames
+                    jobs.forEach(job => {
+                        previousStatuses[job.jobId] = job.status;
+                        displayedFrames[job.jobId] = new Set(job.frames || []);
+                    });
+                    return;
+                }
+
                 jobs.forEach(job => {
                     const oldStatus = previousStatuses[job.jobId];
-                    if (oldStatus && oldStatus !== 'completed' && job.status === 'completed') {
-                        alert(`🎉 Job Done! Process for ID ${job.jobId} has finished.`);
-                        if (Notification.permission === "granted") {
-                            new Notification("Video Processed! 🎬", {
-                                body: `Frames are ready for Job ID: ${job.jobId}`,
-                                icon: "/favicon.svg"
-                            });
+                    const jobContainer = document.getElementById(`job-${job.jobId}`);
+
+                    if (!jobContainer) {
+                        // This shouldn't happen if counts are the same, but safety first
+                        loadJobs(); // Force full refresh
+                        return;
+                    }
+
+                    // 2. If status changed, update badge and buttons
+                    if (oldStatus !== job.status) {
+                        const badge = document.getElementById(`status-${job.jobId}`);
+                        if (badge) {
+                            badge.innerText = job.status;
+                            badge.className = `badge status-${job.status}`;
+                        }
+
+                        const actions = document.getElementById(`actions-${job.jobId}`);
+                        if (actions) {
+                            actions.innerHTML = `
+                                ${job.status === 'processing' || job.status === 'pending' ? `
+                                    <button onclick="cancelJob('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">🛑 Cancel Job</button>
+                                ` : ''}
+                                ${job.status === 'previewing' ? `
+                                    <button onclick="saveSelected('${job.jobId}')" class="btn btn-success" style="padding: 8px 16px; font-size: 0.85rem;">☁️ Save Selected to Cloud</button>
+                                    <button onclick="downloadSelected('${job.jobId}')" class="btn btn-primary" style="padding: 8px 16px; font-size: 0.85rem;">📥 Download Selected</button>
+                                    <button onclick="cancelJob('${job.jobId}')" class="btn btn-secondary" style="padding: 8px 16px; font-size: 0.85rem;">🛑 Cancel Job</button>
+                                ` : ''}
+                                ${job.status === 'completed' ? `
+                                    <a href="/api/v1/video/jobs/${job.jobId}/download" class="btn btn-success" style="text-decoration: none; padding: 8px 16px; font-size: 0.85rem;">⬇️ Download All ZIP</a>
+                                ` : ''}
+                            `;
+                        }
+
+                        // Notification logic
+                        const isDone = job.status === 'completed' || job.status === 'previewing';
+                        const wasNotDone = oldStatus && oldStatus !== 'completed' && oldStatus !== 'previewing';
+                        if (wasNotDone && isDone) {
+                            alert(`🎉 Job Done! Process for ID ${job.jobId} has finished.`);
                         }
                     }
+
+                    // 3. Append new frames smoothly
+                    const grid = document.getElementById(`grid-${job.jobId}`);
+                    const countSpan = document.getElementById(`count-${job.jobId}`);
+                    const framesSection = document.getElementById(`frames-section-${job.jobId}`);
+                    
+                    if (job.frames && job.frames.length > 0) {
+                        // If frames section was empty, create it
+                        if (!framesSection.innerHTML.trim()) {
+                            framesSection.innerHTML = `
+                                <div style="margin-top: 20px;">
+                                    <strong style="color: var(--text-main); font-size: 0.95rem;">🖼️ Total Frames: <span id="count-${job.jobId}">${job.frames.length}</span></strong>
+                                    <div class="frames-grid" id="grid-${job.jobId}"></div>
+                                </div>
+                            `;
+                            displayedFrames[job.jobId] = new Set();
+                        }
+
+                        const currentGrid = document.getElementById(`grid-${job.jobId}`);
+                        const currentCount = document.getElementById(`count-${job.jobId}`);
+                        
+                        job.frames.forEach(f => {
+                            if (!displayedFrames[job.jobId].has(f)) {
+                                const frameHtml = `
+                                    <div class="frame-item">
+                                        <input type="checkbox" class="frame-checkbox" data-url="${f}">
+                                        <a href="${f}" target="_blank">
+                                            <img src="${f}" alt="frame" title="Click to open full size" loading="lazy">
+                                        </a>
+                                    </div>
+                                `;
+                                currentGrid.insertAdjacentHTML('beforeend', frameHtml);
+                                displayedFrames[job.jobId].add(f);
+                            }
+                        });
+                        
+                        if (currentCount) {
+                            currentCount.innerText = job.frames.length;
+                        }
+                    }
+
                     previousStatuses[job.jobId] = job.status;
                 });
-
-                if (jobs.length === 0) {
-                    jobsList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 20px;">No jobs found. Start by uploading a video!</div>';
-                } else {
-                    jobsList.innerHTML = jobs.map(job => generateJobCard(job)).join('');
-                }
             } catch (err) {
                 console.error('Failed to load jobs', err);
             }
@@ -439,6 +556,11 @@
                 }
                 const data = await res.json();
                 alert('✅ ' + data.message);
+                
+                // Clear tracking
+                for (let prop in previousStatuses) delete previousStatuses[prop];
+                for (let prop in displayedFrames) delete displayedFrames[prop];
+                
                 loadJobs();
             } catch (err) {
                 alert('❌ Delete failed: ' + err.message);
@@ -481,6 +603,114 @@
             }, (err) => {
                 alert('❌ Failed to copy ID: ' + err);
             });
+        }
+
+        async function downloadSelected(jobId) {
+            const checkboxes = document.querySelectorAll(`#grid-${jobId} .frame-checkbox:checked`);
+            if (checkboxes.length === 0) return alert('Please select at least one image!');
+
+            const selectedUrls = Array.from(checkboxes).map(cb => cb.getAttribute('data-url'));
+            
+            try {
+                const response = await fetch(`/api/v1/video/jobs/${jobId}/download-selected`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls: selectedUrls })
+                });
+
+                if (!response.ok) throw new Error('Failed to generate ZIP');
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `selected-frames-${jobId}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            } catch (err) {
+                alert('❌ Download failed: ' + err.message);
+            }
+        }
+
+        async function saveSelected(jobId) {
+            const checkboxes = document.querySelectorAll(`#grid-${jobId} .frame-checkbox:checked`);
+            if (checkboxes.length === 0) return alert('Please select images to save permanently!');
+
+            if (!confirm(`Confirm saving ${checkboxes.length} images permanently to Cloud? Unselected frames will be cleaned up.`)) return;
+
+            const selectedUrls = Array.from(checkboxes).map(cb => cb.getAttribute('data-url'));
+            
+            const jobCard = document.getElementById(`job-${jobId}`);
+            if (jobCard) jobCard.style.opacity = '0.5';
+
+            try {
+                const response = await fetch(`/api/v1/video/jobs/${jobId}/confirm-save`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls: selectedUrls })
+                });
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Failed to save images');
+                
+                // Clear displayed frames for this job to force full re-render on next loadJobs
+                delete previousStatuses[jobId];
+                delete displayedFrames[jobId];
+                
+                await loadJobs(); // Refresh the card smoothly
+                alert('✅ ' + data.message);
+            } catch (err) {
+                alert('❌ Save failed: ' + err.message);
+            } finally {
+                if (jobCard) jobCard.style.opacity = '1';
+            }
+        }
+
+        function toggleSelectAll(jobId) {
+            const grid = document.getElementById(`grid-${jobId}`);
+            if (!grid) return;
+            const checkboxes = grid.querySelectorAll('.frame-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+
+        async function deleteSelected(jobId) {
+            const checkboxes = document.querySelectorAll(`#grid-${jobId} .frame-checkbox:checked`);
+            if (checkboxes.length === 0) return alert('Please select images to delete!');
+
+            if (!confirm(`⚠️ Are you sure you want to delete ${checkboxes.length} selected images from Cloud and DB?`)) return;
+
+            const selectedUrls = Array.from(checkboxes).map(cb => cb.getAttribute('data-url'));
+            
+            const jobCard = document.getElementById(`job-${jobId}`);
+            if (jobCard) jobCard.style.opacity = '0.5';
+
+            try {
+                const response = await fetch(`/api/v1/video/jobs/${jobId}/delete-selected`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls: selectedUrls })
+                });
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Failed to delete images');
+                
+                // Refresh logic: remove from local sets and UI
+                const currentSet = displayedFrames[jobId];
+                selectedUrls.forEach(url => currentSet.delete(url));
+                
+                // Simple way: force full re-render of this job
+                delete previousStatuses[jobId];
+                delete displayedFrames[jobId];
+                
+                await loadJobs();
+                alert('🗑️ ' + data.message);
+            } catch (err) {
+                alert('❌ Delete failed: ' + err.message);
+            } finally {
+                if (jobCard) jobCard.style.opacity = '1';
+            }
         }
 
         if (window.Notification && Notification.permission !== "denied") {
