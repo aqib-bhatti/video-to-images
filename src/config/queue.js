@@ -1,12 +1,24 @@
 const { Queue } = require('bullmq');
 
-// Use Upstash Redis URL from environment variables for Vercel, or fallback to local Redis
-const redisConnection = process.env.REDIS_URL || {
+// Render/Production mein REDIS_URL environment variable lazmi hona chahiye (Upstash Redis)
+const redisUrl = process.env.REDIS_URL;
+
+const redisConnection = redisUrl ? redisUrl : {
   host: 'localhost',
   port: 6379,
 };
 
-const videoProcessingQueue = new Queue('video-processing', { connection: redisConnection });
+if (!redisUrl && process.env.NODE_ENV === 'production') {
+  console.warn('⚠️ WARNING: REDIS_URL is not set in production environment!');
+}
+
+const videoProcessingQueue = new Queue('video-processing', { 
+  connection: redisConnection,
+  defaultJobOptions: {
+    removeOnComplete: true,
+    removeOnFail: false
+  }
+});
 
 module.exports = {
   videoProcessingQueue,
