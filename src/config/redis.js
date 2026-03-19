@@ -1,37 +1,47 @@
 const Redis = require('ioredis');
+const { URL } = require('url');
 
 let redisUrl = process.env.REDIS_URL;
 if (redisUrl && (redisUrl.startsWith('"') || redisUrl.startsWith("'"))) {
   redisUrl = redisUrl.substring(1, redisUrl.length - 1);
 }
 
+// Parse Redis URL for BullMQ compatibility
+let parsedRedis = {};
+if (redisUrl) {
+  try {
+    const url = new URL(redisUrl);
+    parsedRedis = {
+      host: url.hostname,
+      port: parseInt(url.port),
+      username: url.username,
+      password: url.password,
+      tls: url.protocol === 'rediss:' ? { rejectUnauthorized: false } : undefined
+    };
+  } catch (e) {
+    console.error('❌ Failed to parse REDIS_URL:', e.message);
+  }
+}
+
 const commonConfig = {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
-  keepAlive: 10000, // Connection ko zinda rakhne ke liye
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 50, 2000);
-    return delay; // Connection toote to foran reconnect kare
-  }
+  keepAlive: 10000,
+  retryStrategy: (times) => Math.min(times * 50, 2000)
 };
-
-const tlsConfig = redisUrl ? { tls: { rejectUnauthorized: false } } : {};
 
 const connectionOptions = {
   ...commonConfig,
-  ...tlsConfig,
+  ...(redisUrl ? { tls: { rejectUnauthorized: false } } : {}),
+  ...parsedRedis
 };
 
-// Helper function for BullMQ to create a new connection
 const createConnection = () => {
-  if (redisUrl) {
-    return new Redis(redisUrl, connectionOptions);
-  }
-  return new Redis(connectionOptions);
+  return new Redis(redisUrl || connectionOptions, commonConfig);
 };
 
-const subscriber = createConnection();
-const client = createConnection();
+const subscriber = new Redis(redisUrl || connectionOptions, commonConfig);
+const client = new Redis(redisUrl || connectionOptions, commonConfig);
 
 subscriber.on('connect', () => console.log('✅ [Redis Subscriber] Connected'));
 subscriber.on('error', (err) => console.error('❌ [Redis Subscriber] Error:', err.message));

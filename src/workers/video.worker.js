@@ -220,7 +220,7 @@ const worker = new Worker('video-processing', async (job) => {
     throw error;
   }
 }, { 
-  connection: redisUrl || connectionOptions,
+  connection: connectionOptions,
   concurrency: 1, 
   lockDuration: 300000, // 5 minutes lock
   stalledInterval: 30000, // Check for stalled jobs every 30s
