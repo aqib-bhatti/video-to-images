@@ -64,26 +64,20 @@ const updateStatus = async (jobId, data) => {
 };
 
 const worker = new Worker('video-processing', async (job) => {
-  console.log(`🔔 [Worker] Received job: ${job.id}`);
+  console.log(`🔔 [Worker] Processing job ${job.id} (JobId: ${job.data.jobId})`);
   const { jobId, videoUrl, fps, webhookUrl } = job.data;
   const outputDir = path.join(os.tmpdir(), 'videotoimage', jobId);
 
-  // Initial check via API/Local DB
-  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
-  try {
-    const res = await axios.get(`${publicUrl}/api/v1/video/jobs/${jobId}`);
-    if (!res.data) return console.log(`Job ${jobId} not found. Stopping.`);
-  } catch (err) {
-    // If API check fails, fallback to local DB check
-    const initialJobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
-    if (!initialJobCheck) {
-      return console.log(`Job ${jobId} was cancelled before processing could start.`);
-    }
+  // Initial check via Local DB
+  const initialJobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
+  if (!initialJobCheck) {
+    return console.log(`Job ${jobId} not found in DB. Stopping.`);
   }
 
   console.log(`Starting job ${jobId} for video: ${videoUrl}`);
 
   // Update job status to 'processing'
+  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
   await updateStatus(jobId, { status: 'processing', startedAt: new Date().toISOString() });
 
   const localVideoPath = path.join(os.tmpdir(), `video_${jobId}.mp4`);

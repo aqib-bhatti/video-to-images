@@ -89,7 +89,8 @@ const extractFrames = async (req, res) => {
     stmt.run(jobData.jobId, jobData.videoUrl, jobData.fps, jobData.status, jobData.createdAt, jobData.webhookUrl);
 
     // Add job to the queue
-    await videoProcessingQueue.add('process-video', jobData);
+    await videoProcessingQueue.add('process-video', jobData, { jobId: jobData.jobId });
+    console.log(`✅ Job ${jobData.jobId} added to Redis queue`);
     res.status(202).json({ jobId });
   } catch (error) {
     console.error('Error creating job:', error);

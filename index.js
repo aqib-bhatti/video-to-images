@@ -9,7 +9,9 @@ const setupDatabase = require('./src/db/setup');
 setupDatabase();
 
 // Start the worker
+console.log('🔄 Starting Video Worker...');
 require('./src/workers/video.worker');
+console.log('✅ Video Worker initialized.');
 
 const app = express();
 const port = process.env.PORT || 3000;
