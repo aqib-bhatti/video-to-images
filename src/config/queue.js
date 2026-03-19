@@ -1,15 +1,25 @@
 const { Queue } = require('bullmq');
 
-// Render/Production mein REDIS_URL environment variable lazmi hona chahiye (Upstash Redis)
-const redisUrl = process.env.REDIS_URL;
+// Upstash Redis URL configuration
+let redisUrl = process.env.REDIS_URL;
+
+// Agar user ne REST_URL aur TOKEN diya hai, to hum URL construct kar sakte hain (lekin rediss:// behtar hai)
+if (!redisUrl && process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  const host = process.env.UPSTASH_REDIS_REST_URL.replace('https://', '');
+  const password = process.env.UPSTASH_REDIS_REST_TOKEN;
+  redisUrl = `rediss://default:${password}@${host}:6379`;
+}
 
 const redisConnection = redisUrl ? redisUrl : {
-  host: 'localhost',
+  host: '127.0.0.1',
   port: 6379,
 };
 
-if (!redisUrl && process.env.NODE_ENV === 'production') {
-  console.warn('⚠️ WARNING: REDIS_URL is not set in production environment!');
+// Debugging
+if (redisUrl) {
+  console.log('✅ Connecting to Redis via URL');
+} else {
+  console.log('⚠️ No REDIS_URL found, using localhost:6379');
 }
 
 const videoProcessingQueue = new Queue('video-processing', { 
@@ -18,6 +28,11 @@ const videoProcessingQueue = new Queue('video-processing', {
     removeOnComplete: true,
     removeOnFail: false
   }
+});
+
+// Event listeners for connection status
+videoProcessingQueue.on('error', (err) => {
+  console.error('❌ Redis Queue Error:', err.message);
 });
 
 module.exports = {

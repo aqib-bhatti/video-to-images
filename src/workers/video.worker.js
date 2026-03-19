@@ -199,6 +199,14 @@ const worker = new Worker('video-processing', async (job) => {
   }
 }, { connection: redisConnection });
 
+worker.on('error', err => {
+  console.error('❌ Worker Redis Connection Error:', err.message);
+});
+
+worker.on('failed', (job, err) => {
+  console.error(`❌ Job ${job.id} failed:`, err.message);
+});
+
 worker.on('failed', (job, err) => {
   console.log(`Job ${job.id} failed with error: ${err.message}`);
 });
