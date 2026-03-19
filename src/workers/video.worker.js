@@ -94,6 +94,12 @@ const worker = new Worker('video-processing', async (job) => {
     // 1. Extract frames locally
     await new Promise((resolve, reject) => {
       let command = ffmpeg(videoUrl)
+        .inputOptions([
+          '-reconnect 1',
+          '-reconnect_at_eof 1',
+          '-reconnect_streamed 1',
+          '-reconnect_delay_max 5'
+        ])
         .on('start', (cmd) => console.log('FFmpeg started with cmd:', cmd))
         .on('end', () => {
           console.log('FFmpeg finished extraction.');
