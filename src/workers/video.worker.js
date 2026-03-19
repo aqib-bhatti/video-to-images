@@ -14,8 +14,8 @@ const axios = require('axios');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const updateStatus = async (jobId, data) => {
-  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
-  const apiEndpoint = `${publicUrl}/api/v1/video/jobs/${jobId}/status`;
+  const apiUrl = process.env.RENDER_EXTERNAL_URL || process.env.VERCEL_URL || 'http://localhost:3000'; // Fallback for local testing
+  const apiEndpoint = `${apiUrl}/api/v1/video/jobs/${jobId}/status`;
 
   // 1. Update local DB (if running in same environment as API)
   try {
@@ -54,35 +54,53 @@ const updateStatus = async (jobId, data) => {
     // console.log(`Local DB update skipped for job ${jobId}`);
   }
 
-  // 2. Update API (Crucial for remote workers)
+  // 2. Update Vercel API (Crucial for remote workers)
   try {
     await axios.post(apiEndpoint, data);
-    console.log(`API updated for job ${jobId}`);
+    console.log(`Vercel API updated for job ${jobId}`);
   } catch (err) {
-    console.error(`Failed to update API for job ${jobId}:`, err.message);
+    console.error(`Failed to update Vercel API for job ${jobId}:`, err.message);
   }
 };
 
 const worker = new Worker('video-processing', async (job) => {
-  console.log(`🔔 [Worker] Processing job ${job.id} (JobId: ${job.data.jobId})`);
+  console.log(`🔔 [Worker] Received job: ${job.id}`);
   const { jobId, videoUrl, fps, webhookUrl } = job.data;
   const outputDir = path.join(os.tmpdir(), 'videotoimage', jobId);
 
-  // Initial check via Local DB
-  const initialJobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
-  if (!initialJobCheck) {
-    return console.log(`Job ${jobId} not found in DB. Stopping.`);
+  // Initial check via API/Local DB
+  const apiUrl = process.env.RENDER_EXTERNAL_URL || process.env.VERCEL_URL || 'http://localhost:3000';
+  try {
+    const res = await axios.get(`${apiUrl}/api/v1/video/jobs/${jobId}`);
+    if (!res.data) return console.log(`Job ${jobId} not found. Stopping.`);
+  } catch (err) {
+    // If API check fails, fallback to local DB check
+    const initialJobCheck = db.prepare('SELECT jobId FROM jobs WHERE jobId = ?').get(jobId);
+    if (!initialJobCheck) {
+      return console.log(`Job ${jobId} was cancelled before processing could start.`);
+    }
   }
 
   console.log(`Starting job ${jobId} for video: ${videoUrl}`);
 
   // Update job status to 'processing'
-  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`;
   await updateStatus(jobId, { status: 'processing', startedAt: new Date().toISOString() });
 
   const localVideoPath = path.join(os.tmpdir(), `video_${jobId}.mp4`);
 
   try {
+    // Check cancellation again before downloading
+    try {
+      await axios.get(`${apiUrl}/api/v1/video/jobs/${jobId}`);
+    } catch (err) {
+      console.log(`Job ${jobId} was cancelled before download. Stopping.`);
+      return;
+    }
+
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
     // 0. Download video locally to avoid FFmpeg SIGSEGV on streaming
     console.log(`Downloading video locally for job ${jobId}...`);
     const writer = fs.createWriteStream(localVideoPath);
@@ -102,6 +120,15 @@ const worker = new Worker('video-processing', async (job) => {
       });
     });
     console.log(`Video downloaded to ${localVideoPath}`);
+
+    // Check cancellation again after download
+    try {
+      await axios.get(`${apiUrl}/api/v1/video/jobs/${jobId}`);
+    } catch (err) {
+      console.log(`Job ${jobId} was cancelled after download. Stopping.`);
+      if (fs.existsSync(localVideoPath)) fs.unlinkSync(localVideoPath);
+      return;
+    }
 
     // 1. Extract frames locally
     await new Promise((resolve, reject) => {
@@ -130,6 +157,17 @@ const worker = new Worker('video-processing', async (job) => {
     const uploadedUrls = [];
 
     for (const file of frameFiles) {
+      // Check cancellation via API/Local DB during the loop
+      try {
+        await axios.get(`${apiUrl}/api/v1/video/jobs/${jobId}`);
+      } catch (err) {
+        console.log(`Job ${jobId} was cancelled during frame upload. Stopping.`);
+        if (fs.existsSync(outputDir)) {
+          fs.rmSync(outputDir, { recursive: true, force: true });
+        }
+        return;
+      }
+
       const filePath = path.join(outputDir, file);
       const fileContent = fs.readFileSync(filePath);
       const r2Key = `temp/${jobId}/${file}`; // Upload to temp folder

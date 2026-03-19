@@ -1,5 +1,4 @@
 const { Queue } = require('bullmq');
-const IORedis = require('ioredis');
 require('dotenv').config();
 
 // Sanitize REDIS_URL (remove quotes if present)
@@ -8,24 +7,26 @@ if (redisUrl && (redisUrl.startsWith('"') || redisUrl.startsWith("'"))) {
   redisUrl = redisUrl.substring(1, redisUrl.length - 1);
 }
 
-// More robust IORedis connection for Upstash
-const redisConnection = redisUrl ? new IORedis(redisUrl, {
+// Connection options for Upstash
+const connectionOptions = redisUrl ? {
+  url: redisUrl,
+  tls: redisUrl.startsWith('rediss://') ? {} : undefined,
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
-  tls: redisUrl.startsWith('rediss://') ? { rejectUnauthorized: false } : undefined,
-}) : new IORedis({
+} : {
   host: '127.0.0.1',
-  port: 6379,
-  maxRetriesPerRequest: null,
-});
+  port: 6379
+};
 
 const queueOptions = {
-  connection: redisConnection,
+  connection: connectionOptions,
   defaultJobOptions: {
     removeOnComplete: true,
     removeOnFail: false
   }
 };
+
+const redisConnection = connectionOptions;
 
 const videoProcessingQueue = new Queue('video-processing', queueOptions);
 
@@ -33,15 +34,7 @@ videoProcessingQueue.on('error', (err) => {
   console.error('❌ Redis Queue Error:', err.message);
 });
 
-redisConnection.on('connect', () => {
-  console.log('✅ [Redis] Connection established.');
-});
-
-redisConnection.on('error', (err) => {
-  console.error('❌ [Redis] Error:', err.message);
-});
-
-console.log(redisUrl ? '✅ [Redis] Using Upstash Cloud' : '⚠️ [Redis] Using Localhost');
+console.log(redisUrl ? '✅ [Redis] Configured for Upstash Cloud' : '⚠️ [Redis] Configured for Localhost');
 
 module.exports = {
   videoProcessingQueue,
