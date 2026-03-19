@@ -13,11 +13,13 @@ if (redisUrl) {
     const url = new URL(redisUrl);
     parsedRedis = {
       host: url.hostname,
-      port: parseInt(url.port),
-      username: url.username,
-      password: url.password,
-      tls: url.protocol === 'rediss:' ? { rejectUnauthorized: false } : undefined
+      port: url.port ? parseInt(url.port) : (url.protocol === 'rediss:' ? 6380 : 6379),
+      username: url.username || undefined,
+      password: url.password || undefined,
     };
+    if (url.protocol === 'rediss:') {
+      parsedRedis.tls = { rejectUnauthorized: false };
+    }
   } catch (e) {
     console.error('❌ Failed to parse REDIS_URL:', e.message);
   }
@@ -32,7 +34,6 @@ const commonConfig = {
 
 const connectionOptions = {
   ...commonConfig,
-  ...(redisUrl ? { tls: { rejectUnauthorized: false } } : {}),
   ...parsedRedis
 };
 
