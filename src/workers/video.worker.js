@@ -64,6 +64,7 @@ const updateStatus = async (jobId, data) => {
 };
 
 const worker = new Worker('video-processing', async (job) => {
+  console.log(`🔔 [Worker] Received job: ${job.id}`);
   const { jobId, videoUrl, fps, webhookUrl } = job.data;
   const outputDir = path.join(os.tmpdir(), 'videotoimage', jobId);
 

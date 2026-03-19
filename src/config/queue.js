@@ -1,38 +1,40 @@
 const { Queue } = require('bullmq');
-const IORedis = require('ioredis');
+require('dotenv').config();
 
-// Upstash Redis URL configuration
-const redisUrl = process.env.REDIS_URL;
-
-let redisConnection;
-
-if (redisUrl) {
-  // Use IORedis for better URL parsing and TLS support (Upstash requirement)
-  redisConnection = new IORedis(redisUrl, {
-    maxRetriesPerRequest: null,
-  });
-  console.log('✅ Redis Connection initialized via URL');
-} else {
-  redisConnection = {
-    host: '127.0.0.1',
-    port: 6379,
-    maxRetriesPerRequest: null,
-  };
-  console.log('⚠️ No REDIS_URL found, using localhost:6379');
+// Sanitize REDIS_URL (remove quotes if present)
+let redisUrl = process.env.REDIS_URL;
+if (redisUrl && (redisUrl.startsWith('"') || redisUrl.startsWith("'"))) {
+  redisUrl = redisUrl.substring(1, redisUrl.length - 1);
 }
 
-const videoProcessingQueue = new Queue('video-processing', { 
-  connection: redisConnection,
+// Connection options for Upstash
+const connectionOptions = redisUrl ? {
+  url: redisUrl,
+  tls: redisUrl.startsWith('rediss://') ? {} : undefined,
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+} : {
+  host: '127.0.0.1',
+  port: 6379
+};
+
+const queueOptions = {
+  connection: connectionOptions,
   defaultJobOptions: {
     removeOnComplete: true,
     removeOnFail: false
   }
-});
+};
 
-// Event listeners for connection status
+const redisConnection = connectionOptions;
+
+const videoProcessingQueue = new Queue('video-processing', queueOptions);
+
 videoProcessingQueue.on('error', (err) => {
   console.error('❌ Redis Queue Error:', err.message);
 });
+
+console.log(redisUrl ? '✅ [Redis] Configured for Upstash Cloud' : '⚠️ [Redis] Configured for Localhost');
 
 module.exports = {
   videoProcessingQueue,
