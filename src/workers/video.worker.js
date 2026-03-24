@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
-const { redisUrl, connectionOptions, redisIsAvailable } = require('../config/redis');
+const { createConnection, redisIsAvailable } = require('../config/redis');
 const db = require('../config/db');
 const r2 = require('../config/r2');
 const axios = require('axios');
@@ -221,7 +221,7 @@ if (redisIsAvailable) {
     throw error;
   }
 }, { 
-  connection: redisUrl || connectionOptions,
+  connection: createConnection(),
   concurrency: 1, 
   lockDuration: 300000, // 5 minutes lock
   stalledInterval: 30000, // Check for stalled jobs every 30s

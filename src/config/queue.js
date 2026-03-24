@@ -1,11 +1,11 @@
 const { Queue } = require('bullmq');
-const { redisUrl, connectionOptions, redisIsAvailable } = require('./redis');
+const { createConnection, redisIsAvailable } = require('./redis');
 
 let videoProcessingQueue = null;
 
 if (redisIsAvailable) {
   videoProcessingQueue = new Queue('video-processing', {
-    connection: redisUrl || connectionOptions,
+    connection: createConnection(),
     defaultJobOptions: {
       removeOnComplete: true,
       removeOnFail: true,
