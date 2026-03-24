@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
-const { redisUrl, connectionOptions } = require('../config/redis');
+const { redisUrl, connectionOptions, redisIsAvailable } = require('../config/redis');
 const db = require('../config/db');
 const r2 = require('../config/r2');
 const axios = require('axios');
@@ -63,7 +63,10 @@ const updateStatus = async (jobId, data) => {
   }
 };
 
-const worker = new Worker('video-processing', async (job) => {
+let worker = null;
+
+if (redisIsAvailable) {
+  worker = new Worker('video-processing', async (job) => {
   console.log(`🔔 [Worker] Received job: ${job.id}`);
   console.log(`📦 Job Data:`, JSON.stringify(job.data, null, 2));
   const { jobId, videoUrl, fps, webhookUrl } = job.data;
@@ -243,6 +246,7 @@ worker.on('waiting', (jobId) => {
 worker.on('completed', (job) => {
   console.log(`✅ Job ${job.id} has completed!`);
 });
-worker.on('failed', (job, err) => console.error(`❌ Job ${job.id} failed:`, err.message));
+  worker.on('failed', (job, err) => console.error(`❌ Job ${job.id} failed:`, err.message));
+}
 
 module.exports = worker;

@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
-const { videoProcessingQueue } = require('../config/queue');
+const videoProcessingQueue = require('../config/queue');
+const { redisIsAvailable } = require('../config/redis');
 const db = require('../config/db');
 const r2 = require('../config/r2');
 const { CopyObjectCommand, PutObjectCommand, DeleteObjectsCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -40,6 +41,10 @@ const getUploadUrl = async (req, res) => {
 };
 
 const extractFrames = async (req, res) => {
+  if (!redisIsAvailable) {
+      return res.status(503).json({ error: 'Background processing is currently disabled because Redis is not configured.' });
+  }
+
   let videoUrl = req.body ? req.body.videoUrl : null;
   const fps = req.body ? req.body.fps || 1 : 1;
   const webhookUrl = req.body ? req.body.webhookUrl : null;
@@ -195,9 +200,11 @@ const cancelJob = async (req, res) => {
     }
 
     // 3. Try to remove from BullMQ queue if it exists
-    const jobInQueue = await videoProcessingQueue.getJob(jobId);
-    if (jobInQueue) {
-      await jobInQueue.remove();
+    if (redisIsAvailable && videoProcessingQueue) {
+      const jobInQueue = await videoProcessingQueue.getJob(jobId);
+      if (jobInQueue) {
+        await jobInQueue.remove();
+      }
     }
 
     res.json({ message: 'Job cancelled and all data deleted successfully' });
