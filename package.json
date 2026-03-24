@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "NODE_ENV=production node index.js",
+    "start": "node index.js",
     "dev": "nodemon index.js",
     "worker": "node src/workers/video.worker.js"
   },
@@ -13,6 +13,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1010.0",
     "@aws-sdk/lib-storage": "^3.1011.0",

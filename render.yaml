@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: video-frame-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+    # Optional: Uncomment if you want persistent database
+    # disk:
+    #   name: sqlite-data
+    #   mountPath: /data
+    #   sizeGB: 1

@@ -15,8 +15,8 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const updateStatus = async (jobId, data) => {
   const port = process.env.PORT || 3000;
-  const apiUrl = process.env.RENDER_EXTERNAL_URL || process.env.VERCEL_URL || `http://localhost:${port}`;
-  const apiEndpoint = `${apiUrl}/api/v1/video/jobs/${jobId}/status`;
+  // On Render/Vercel, always try to use localhost for internal status updates to avoid external network overhead
+  const apiEndpoint = `http://127.0.0.1:${port}/api/v1/video/jobs/${jobId}/status`;
 
   try {
     const { status, frames, startedAt, completedAt, failedAt, error } = data;
@@ -119,10 +119,8 @@ const worker = new Worker('video-processing', async (job) => {
       const publicUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
       uploadedUrls.push(publicUrl);
 
-      // Status update is now non-blocking
-      if (uploadedUrls.length % 5 === 0 || uploadedUrls.length === frameFiles.length) {
-        updateStatus(jobId, { status: 'processing', frames: uploadedUrls });
-      }
+      // Stream each image immediately to UI
+      updateStatus(jobId, { status: 'processing', frames: uploadedUrls });
     }
 
     // 5. Final status update
@@ -220,7 +218,7 @@ const worker = new Worker('video-processing', async (job) => {
     throw error;
   }
 }, { 
-  connection: connectionOptions,
+  connection: redisUrl || connectionOptions,
   concurrency: 1, 
   lockDuration: 300000, // 5 minutes lock
   stalledInterval: 30000, // Check for stalled jobs every 30s
